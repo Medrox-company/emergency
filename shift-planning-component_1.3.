@@ -1,0 +1,328 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Clock, Info, User } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+type ShiftType = 'day' | 'night';
+type AvailabilityStatus = 'none' | 'available' | 'maybe' | 'unavailable';
+
+interface ShiftAvailability {
+  date: string;
+  type: ShiftType;
+  status: AvailabilityStatus;
+  doctorId: string;
+}
+
+const MONTHS = ['Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
+  'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec'];
+
+const WEEKDAYS = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+
+const STATUS_CONFIG = {
+  available: {
+    label: 'Chci sloužit',
+    color: 'bg-green-500',
+    textColor: 'text-white'
+  },
+  maybe: {
+    label: 'Nehodí se',
+    color: 'bg-orange-500',
+    textColor: 'text-white'
+  },
+  unavailable: {
+    label: 'Nemohu',
+    color: 'bg-red-500',
+    textColor: 'text-white'
+  },
+  none: {
+    label: 'Nevyplněno',
+    color: 'bg-white',
+    textColor: 'text-gray-600'
+  }
+};
+
+const LiveTime = () => {
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="text-sm text-gray-500 flex items-center gap-2">
+      <Clock className="w-4 h-4" />
+      {time.toLocaleTimeString('cs-CZ')}
+    </div>
+  );
+};
+
+const PlanSluzeb = () => {
+  // Seznam lékařů
+  const [doctors, setDoctors] = useState([
+    { id: '1', name: 'Jan Novák', specialization: 'Chirurgie' },
+    { id: '2', name: 'Anna Svobodová', specialization: 'Interna' },
+    { id: '3', name: 'Petr Čermák', specialization: 'Neurologie' }
+  ]);
+
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDoctor, setSelectedDoctor] = useState<string | null>(null);
+  const [availability, setAvailability] = useState<ShiftAvailability[]>([]);
+
+  const getShiftStatus = useCallback((date: Date, type: ShiftType): AvailabilityStatus => {
+    if (!selectedDoctor) return 'none';
+    
+    const dateStr = date.toISOString().split('T')[0];
+    return availability.find(
+      a => a.date === dateStr && a.type === type && a.doctorId === selectedDoctor
+    )?.status || 'none';
+  }, [availability, selectedDoctor]);
+
+  const isWeekend = (date: Date): boolean => {
+    return date.getDay() === 0 || date.getDay() === 6;
+  };
+
+  const isPastDate = (date: Date): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return date < today;
+  };
+
+  const getNextStatus = (current: AvailabilityStatus): AvailabilityStatus => {
+    const sequence: AvailabilityStatus[] = ['none', 'available', 'maybe', 'unavailable'];
+    const currentIndex = sequence.indexOf(current);
+    return sequence[(currentIndex + 1) % sequence.length];
+  };
+
+  const handleShiftClick = useCallback((date: Date, type: ShiftType, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (isPastDate(date) || !selectedDoctor) return;
+
+    const dateStr = date.toISOString().split('T')[0];
+    const currentStatus = getShiftStatus(date, type);
+    const nextStatus = getNextStatus(currentStatus);
+
+    setAvailability(prev => {
+      const filtered = prev.filter(
+        a => !(a.date === dateStr && a.type === type && a.doctorId === selectedDoctor)
+      );
+      if (nextStatus === 'none') return filtered;
+      return [...filtered, { date: dateStr, type, status: nextStatus, doctorId: selectedDoctor }];
+    });
+  }, [getShiftStatus, selectedDoctor]);
+
+  const changeMonth = (increment: number) => {
+    const newDate = new Date(currentDate);
+    newDate.setMonth(newDate.getMonth() + increment);
+    setCurrentDate(newDate);
+  };
+
+  // Výpočet odpracovaných hodin
+  const shiftHours = useMemo(() => {
+    if (!selectedDoctor) return { dayHours: 0, nightHours: 0, totalHours: 0 };
+
+    const dayShifts = availability.filter(shift => 
+      shift.status === 'available' && 
+      shift.type === 'day' && 
+      shift.doctorId === selectedDoctor
+    ).length;
+
+    const nightShifts = availability.filter(shift => 
+      shift.status === 'available' && 
+      shift.type === 'night' && 
+      shift.doctorId === selectedDoctor
+    ).length;
+
+    return {
+      dayHours: dayShifts * 12,
+      nightHours: nightShifts * 12,
+      totalHours: (dayShifts + nightShifts) * 12
+    };
+  }, [availability, selectedDoctor]);
+
+  const renderCalendarDay = useCallback((day: Date) => {
+    const currentMonth = currentDate.getMonth();
+    const isCurrentMonth = day.getMonth() === currentMonth;
+    const dayNumber = day.getDate();
+    const isWeekendDay = isWeekend(day);
+    const isPast = isPastDate(day);
+    const isToday = day.toDateString() === new Date().toDateString();
+    
+    if (!isCurrentMonth) {
+      return <div className="h-32 border border-gray-200 bg-gray-50" />;
+    }
+
+    const dayStatus = getShiftStatus(day, 'day');
+    const nightStatus = getShiftStatus(day, 'night');
+
+    return (
+      <div className={`h-32 border ${isToday ? 'border-blue-500 border-2' : 'border-gray-200'} 
+        ${isPast ? 'bg-gray-100' : isWeekendDay ? 'bg-gray-200' : 'bg-gray-50'}`}>
+        <div className="flex flex-col h-full">
+          <div className="flex justify-between items-center p-2">
+            <span className={`font-medium ${isToday ? 'text-blue-500' : ''}`}>
+              {dayNumber}
+            </span>
+            {isToday && (
+              <Badge variant="default" className="text-xs bg-blue-500">
+                Dnes
+              </Badge>
+            )}
+          </div>
+          <div className="flex-1 flex flex-col gap-2 p-2">
+            <button
+              onClick={(e) => handleShiftClick(day, 'day', e)}
+              disabled={isPast}
+              className={`flex items-center justify-center gap-2 py-2 rounded-md
+                ${STATUS_CONFIG[dayStatus].color}
+                ${STATUS_CONFIG[dayStatus].textColor}`}
+            >
+              <span className="text-xs">Den</span>
+            </button>
+            <button
+              onClick={(e) => handleShiftClick(day, 'night', e)}
+              disabled={isPast}
+              className={`flex items-center justify-center gap-2 py-2 rounded-md
+                ${STATUS_CONFIG[nightStatus].color}
+                ${STATUS_CONFIG[nightStatus].textColor}`}
+            >
+              <span className="text-xs">Noc</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }, [currentDate, getShiftStatus, handleShiftClick]);
+
+  return (
+    <div className="container mx-auto p-4">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2">
+          <Card>
+            <CardHeader className="border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <div className="space-y-1">
+                  <CardTitle className="text-xl">
+                    {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
+                  </CardTitle>
+                  <LiveTime />
+                </div>
+                <div className="flex items-center gap-4">
+                  {/* Výběr lékaře */}
+                  <div className="flex items-center gap-2">
+                    <User className="w-5 h-5 text-gray-500" />
+                    <Select 
+                      value={selectedDoctor || undefined} 
+                      onValueChange={(value) => setSelectedDoctor(value)}
+                    >
+                      <SelectTrigger className="w-[250px]">
+                        <SelectValue placeholder="Vyberte lékaře" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {doctors.map(doctor => (
+                          <SelectItem key={doctor.id} value={doctor.id}>
+                            {doctor.name} - {doctor.specialization}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button 
+                    onClick={() => setCurrentDate(new Date())} 
+                    size="sm" 
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    Dnes
+                  </Button>
+                  <div className="flex">
+                    <Button onClick={() => changeMonth(-1)} size="sm" variant="outline" className="rounded-r-none px-3">
+                      &larr;
+                    </Button>
+                    <Button onClick={() => changeMonth(1)} size="sm" variant="outline" className="rounded-l-none px-3">
+                      &rarr;
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-7 gap-0">
+                {WEEKDAYS.map(den => (
+                  <div key={den} className="h-10 flex items-center justify-center font-medium text-gray-600">
+                    {den}
+                  </div>
+                ))}
+                {Array(42).fill(null).map((_, index) => {
+                  const date = new Date(currentDate);
+                  date.setDate(1);
+                  const firstDay = date.getDay() || 7;
+                  date.setDate(1 - firstDay + index + 1);
+                  return (
+                    <React.Fragment key={index}>
+                      {renderCalendarDay(date)}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Postranní panel s přehledem odpracovaných hodin */}
+        <Card className="col-span-1">
+          <CardHeader>
+            <CardTitle>Přehled služeb</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!selectedDoctor ? (
+              <div className="text-center text-gray-500 py-4">
+                <User className="w-12 h-12 mx-auto mb-2 text-gray-400" />
+                <p>Prosím vyberte lékaře pro zobrazení služeb</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span>Denní směny:</span>
+                    <span className="font-semibold">{shiftHours.dayHours} hodin</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Noční směny:</span>
+                    <span className="font-semibold">{shiftHours.nightHours} hodin</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t pt-2">
+                    <span className="font-bold">Celkem:</span>
+                    <span className="font-bold">{shiftHours.totalHours} hodin</span>
+                  </div>
+                </div>
+
+                {/* Legenda barev */}
+                <div className="border-t pt-4">
+                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                    <Info className="w-5 h-5 text-gray-500" />
+                    Legenda barev
+                  </h3>
+                  <div className="space-y-2">
+                    {Object.entries(STATUS_CONFIG).map(([status, config]) => (
+                      <div key={status} className="flex items-center gap-2">
+                        <div className={`w-5 h-5 rounded ${config.color}`}></div>
+                        <span>{config.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+export default PlanSluzeb;
